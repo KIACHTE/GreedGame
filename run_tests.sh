@@ -1,5 +1,7 @@
 #!/bin/bash
 
+NUM_BOARDS=10  # 🟢 MODIFIED: Make number of boards per size parametric
+
 echo "Cleaning old results..."
 rm -rf results/* snapshots/* boards/*  # ✅ Remove all old files
 
@@ -18,7 +20,7 @@ BOARD_SIZES=(10 25 50)
 
 # ✅ Generate multiple sets of boards
 for size in "${BOARD_SIZES[@]}"; do
-    for i in {1..5}; do  # 5 boards per size
+    for ((i = 1; i <= NUM_BOARDS; i++)); do  # 🟢 MODIFIED
         java -cp bin game.InstanceGenerator "boards/board_${size}x${size}_$i.dat" $size
     done
 done
@@ -34,24 +36,40 @@ while IFS= read -r studentID; do
     > "$playerLogFile"
 
     for size in "${BOARD_SIZES[@]}"; do
-        for i in {1..5}; do
+        for ((i = 1; i <= NUM_BOARDS; i++)); do  # 🟢 MODIFIED
             boardFile="boards/board_${size}x${size}_$i.dat"
             echo "Testing $studentID on $boardFile..."
 
-            output=$(java -cp bin game.Tester "$boardFile" "$studentID")
-            score=$(echo "$output" | tail -n 1 | awk '{print $2}')  # Extract score
-            maxScore=$((size * size))  # ✅ Compute max possible score
-            percentage=$(awk "BEGIN {printf \"%.2f\", 100 * $score / $maxScore}")  # Compute percentage
+            # Use timeout to ensure no infinite loops hang the test
+            output=$(timeout 3s java -cp bin game.Tester "$boardFile" "$studentID")
+            exit_code=$?
 
-            # ✅ Log game details: board size, game number, raw score, percentage
-            echo "$size x $size - Game $i: $score ($percentage%)" >> "$playerLogFile"
+            # Default to minimal score
+            score=1
+            percentage=0.00
+
+            if [ $exit_code -eq 0 ]; then
+                # Try to extract score normally
+                score_line=$(echo "$output" | tail -n 1)
+                score=$(echo "$score_line" | awk '{print $2}')
+                if [[ "$score" =~ ^[0-9]+$ ]]; then
+                    maxScore=$((size * size))
+                    percentage=$(awk "BEGIN {printf \"%.2f\", 100 * $score / $maxScore}")
+                    echo "$size x $size - Game $i: $score ($percentage%)" >> "$playerLogFile"
+                else
+                    echo "$size x $size - Game $i: invalid score ($score_line)" >> "$playerLogFile"
+                fi
+            else
+                # Timed out or crashed
+                echo "$size x $size - Game $i: 1 (timeout/crash) ($score%)" >> "$playerLogFile"
+            fi
 
             totalPercentage=$(awk "BEGIN {print $totalPercentage + $percentage}")
         done
     done
 
     # ✅ Compute and log final **average percentage score** per student
-    totalGames=$(( ${#BOARD_SIZES[@]} * 5 ))  # Total games played
+    totalGames=$(( ${#BOARD_SIZES[@]} * NUM_BOARDS ))  # 🟢 MODIFIED
     avgPercentage=$(awk "BEGIN {printf \"%.2f\", $totalPercentage / $totalGames}")
     echo "$studentID $avgPercentage%" >> results/TotalScores.txt
 done < students.txt
